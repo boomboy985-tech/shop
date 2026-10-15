@@ -1,417 +1,543 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import json
 import base64
+import html
+import io
+import time
 import urllib.parse
-import requests
+from datetime import datetime
+
+import pandas as pd
+import streamlit as st
+from PIL import Image
 from streamlit_gsheets import GSheetsConnection
 
-# ==========================================
-# 1. CONFIGURATION & CONSTANTS
-# ==========================================
-WHATSAPP_NUMBER = "918089523293"
-ADMIN_SECRET = "adithyan1234"
+# --- CONFIGURATION & CONSTANTS ---
+SHOP_NAME = "Cartel Shop"
+WHATSAPP_NUMBER = "918089523293"  # WhatsApp business number with country code
+SUPPORT_EMAIL = ""  # optional: add a support email to show in the footer
+ADMIN_PAGE_KEY = "rootcartel"  # open the admin dashboard with  ?page=rootcartel
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "cartel@123")  # set in secrets.toml
+CURRENCY = "Rs."
 
-st.set_page_config(
-    page_title="Cartel Shop",
-    page_icon="🛒",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
+ORDER_COLS = ["Order ID", "TimeStamp", "Custumer Name", "Phone Number",
+              "PIN Code", "Full Adress", "Order Items & Total", "Status"]
+PRODUCT_COLS = ["Products", "Product ID", "Title", "Price", "Description",
+                "Image 1", "Image 2", "Image 3", "Active"]
+STATUS_OPTIONS = ["Pending", "Confirmed", "In Transit", "Delivered", "Cancelled"]
 
-# UI Styling matching the modern e-commerce mobile app reference
-UI_CSS = """
+st.set_page_config(page_title=SHOP_NAME, page_icon=None, layout="centered",
+                   initial_sidebar_state="collapsed")
+
+# --- STYLES ---
+st.markdown("""
 <style>
-    /* Light theme app container background */
-    .stApp {
-        background-color: #f4f6f9;
-        color: #1f2937;
-    }
-    
-    /* Mobile Shell Frame for Desktop View */
-    @media (min-width: 768px) {
-        .main .block-container {
-            max-width: 440px;
-            margin: auto;
-            padding-top: 1.5rem;
-            padding-bottom: 6rem;
-            background-color: #ffffff;
-            border-radius: 30px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e5e7eb;
-        }
-    }
-    
-    /* Bottom Navigation Bar Styles */
-    .nav-container {
-        position: fixed;
-        bottom: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 100%;
-        max-width: 440px;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(10px);
-        border-top: 1px solid #e5e7eb;
-        display: flex;
-        justify-content: space-around;
-        padding: 12px 0;
-        z-index: 99999;
-    }
-    
-    .nav-item {
-        color: #9ca3af;
-        text-align: center;
-        text-decoration: none;
-        font-size: 11px;
-        font-weight: 600;
-        transition: color 0.3s ease;
-    }
-    
-    .nav-item:hover, .nav-item.active {
-        color: #ff5722;
-    }
-    
-    /* Product Card Styling */
-    .product-card {
-        background: #ffffff;
-        border-radius: 20px;
-        padding: 16px;
-        border: 1px solid #f0f2f5;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
-        margin-bottom: 16px;
-        text-align: center;
-    }
-    
-    /* Admin Banner */
-    .admin-banner {
-        background: linear-gradient(135deg, #ff5722, #ff7043);
-        padding: 20px;
-        border-radius: 16px;
-        color: white;
-        text-align: center;
-        margin-bottom: 20px;
-    }
+:root { --accent:#F97316; --accent-dark:#EA580C; --ink:#111827; --muted:#6B7280; --bg:#F3F4F8; }
+#MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {display:none !important;}
+.stApp {background:var(--bg);}
+.block-container {padding:0.8rem 1rem 7rem 1rem !important; max-width:520px;}
+h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
+
+.hdr {display:flex; justify-content:space-between; align-items:center; margin:0 0 .8rem 0;}
+.hdr .hi {font-size:.85rem; color:var(--muted);}
+.hdr .nm {font-size:1.25rem; font-weight:800; color:var(--ink); letter-spacing:.2px;}
+.hdr .badge {width:42px; height:42px; border-radius:14px; background:#fff; display:flex;
+  align-items:center; justify-content:center; box-shadow:0 2px 10px rgba(0,0,0,.06);}
+
+.banner {background:linear-gradient(135deg,#F97316,#FDBA74); border-radius:20px; padding:1.2rem 1.2rem;
+  margin:.4rem 0 1rem 0; color:#fff; position:relative; overflow:hidden;}
+.banner::after {content:""; position:absolute; right:-30px; top:-30px; width:140px; height:140px;
+  border-radius:50%; background:rgba(255,255,255,.18);}
+.banner .t {font-size:1.3rem; font-weight:800; line-height:1.2;}
+.banner .s {font-size:.85rem; opacity:.95; margin-top:.3rem;}
+
+.sec {display:flex; justify-content:space-between; align-items:center; margin:.4rem 0 .6rem 0;}
+.sec .a {font-size:1.05rem; font-weight:800; color:var(--ink);}
+.sec .b {font-size:.8rem; color:var(--accent-dark); font-weight:600;}
+
+.pc {background:#fff; border-radius:18px; padding:.55rem; box-shadow:0 2px 12px rgba(0,0,0,.05); margin-bottom:.4rem;}
+.pimg {width:100%; aspect-ratio:1/1; border-radius:14px; background:#EEF0F4; overflow:hidden;
+  display:flex; align-items:center; justify-content:center;}
+.pimg img {width:100%; height:100%; object-fit:cover;}
+.pt {font-size:.88rem; font-weight:700; color:var(--ink); margin-top:.5rem; height:2.4em; overflow:hidden;
+  line-height:1.2em;}
+.pp {font-size:.95rem; font-weight:800; color:var(--accent-dark); margin:.15rem 0 .3rem 0;}
+
+/* buttons */
+.stButton > button, .stDownloadButton > button, .stLinkButton > a, .stFormSubmitButton > button {
+  border-radius:12px !important; font-weight:700 !important; border:1px solid #E5E7EB !important;
+  background:#fff !important; color:var(--ink) !important; width:100%;}
+.stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"], .stLinkButton > a[kind="primary"] {
+  background:var(--accent) !important; color:#fff !important; border:none !important;}
+.stButton > button[kind="primary"]:hover {background:var(--accent-dark) !important;}
+
+/* search */
+.stTextInput input {border-radius:14px !important; background:#fff !important;}
+
+/* bottom nav */
+.st-key-bottomnav {position:fixed; left:0; right:0; bottom:0; z-index:999; background:#fff;
+  padding:.45rem .6rem calc(.45rem + env(safe-area-inset-bottom)); box-shadow:0 -4px 20px rgba(0,0,0,.08);
+  border-radius:20px 20px 0 0;}
+.st-key-bottomnav [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; gap:.3rem; max-width:520px; margin:0 auto;}
+.st-key-bottomnav [data-testid="stColumn"] {min-width:0 !important; flex:1 1 0 !important;}
+.st-key-bottomnav .stButton > button {border:none !important; background:transparent !important;
+  font-size:.72rem !important; padding:.25rem 0 !important; color:var(--muted) !important;
+  flex-direction:column; height:auto;}
+.st-key-bottomnav .stButton > button[kind="primary"] {background:transparent !important; color:var(--accent-dark) !important;}
+
+.cartrow {background:#fff; border-radius:16px; padding:.5rem; display:flex; gap:.7rem; align-items:center;
+  box-shadow:0 2px 10px rgba(0,0,0,.05); margin-bottom:.3rem;}
+.cartrow img {width:64px; height:64px; border-radius:12px; object-fit:cover; background:#EEF0F4;}
+.cartrow .ct {font-weight:700; font-size:.9rem; color:var(--ink);}
+.cartrow .cp {font-weight:800; font-size:.9rem; color:var(--accent-dark);}
+.sumbox {background:#fff; border-radius:16px; padding:.8rem 1rem; margin:.6rem 0;
+  box-shadow:0 2px 10px rgba(0,0,0,.05);}
+.sumbox .r {display:flex; justify-content:space-between; font-size:.9rem; color:var(--muted); padding:.15rem 0;}
+.sumbox .tot {font-weight:800; color:var(--ink); font-size:1.05rem;}
+.foot {text-align:center; color:var(--muted); font-size:.78rem; margin-top:1.5rem;}
+.ostat {display:inline-block; padding:.1rem .6rem; border-radius:999px; font-size:.72rem; font-weight:700;
+  background:#FFEDD5; color:var(--accent-dark);}
 </style>
-"""
-st.markdown(UI_CSS, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# ==========================================
-# 2. SESSION STATE INITIALIZATION
-# ==========================================
+# --- DATA LAYER ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+PLACEHOLDER_IMG = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>"
+                   "<rect width='300' height='300' fill='%23EEF0F4'/></svg>")
+
+
+def _clean(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+    df = df[cols].dropna(how="all").reset_index(drop=True)
+    return df
+
+
+def read_sheet(name: str, cols: list) -> pd.DataFrame:
+    df = conn.read(worksheet=name, ttl=0)
+    return _clean(df, cols)
+
+
+def write_sheet(name: str, df: pd.DataFrame):
+    conn.update(worksheet=name, data=df)
+
+
+def is_active(v) -> bool:
+    return str(v).strip().lower() in ("yes", "true", "1", "y", "active", "1.0")
+
+
+def load_products(force: bool = False) -> pd.DataFrame:
+    """Cached in session so tab switches don't refetch; forced fresh at checkout."""
+    if force or "products_df" not in st.session_state:
+        df = read_sheet("products", PRODUCT_COLS)
+        df = df[df["Product ID"].notna()].reset_index(drop=True)
+        st.session_state.products_df = df
+    return st.session_state.products_df
+
+
+def to_price(v) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
+
+
+def fmt(v: float) -> str:
+    return f"{CURRENCY} {v:,.0f}" if float(v).is_integer() else f"{CURRENCY} {v:,.2f}"
+
+
+def img_of(row, i=1) -> str:
+    v = row.get(f"Image {i}")
+    if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
+        return ""
+    return str(v).strip()
+
+
+def process_upload(file) -> str:
+    """Resize + compress an uploaded image to a data URI that fits in one sheet cell."""
+    img = Image.open(file).convert("RGB")
+    for size, quality in [(520, 72), (440, 65), (360, 58), (300, 50), (240, 45)]:
+        im = img.copy()
+        im.thumbnail((size, size))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=quality, optimize=True)
+        data = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        if len(data) < 45000:
+            return data
+    return data
+
+
+# --- STATE ---
 if "cart" not in st.session_state:
-    st.session_state.cart = []
-if "admin_authenticated" not in st.session_state:
-    st.session_state.admin_authenticated = False
+    st.session_state.cart = {}
+if "tab" not in st.session_state:
+    st.session_state.tab = "Home"
+if "last_order" not in st.session_state:
+    st.session_state.last_order = None
 
-# ==========================================
-# 3. DATABASE & GITHUB HELPER FUNCTIONS
-# ==========================================
-@st.cache_resource
-def get_db_connection():
-    return st.connection("gsheets", type=GSheetsConnection)
 
-def load_products():
-    try:
-        conn = get_db_connection()
-        df = conn.read(worksheet="products", ttl=5)
-        if df is not None and not df.empty:
-            if 'Active' in df.columns:
-                df = df[df['Active'].astype(str).str.lower() == 'true']
-            return df
-    except Exception as e:
-        st.warning(f"Could not load live inventory from Google Sheets: {e}")
-    
-    return pd.DataFrame([
-        {"Product ID": 1, "Title": "Cartel Signature Tee", "Price": 499, "Description": "Premium cotton streetwear t-shirt.", "Image 1": ""},
-        {"Product ID": 2, "Title": "Tactical Utility Pouch", "Price": 699, "Description": "Durable multi-purpose gear pouch.", "Image 1": ""},
-        {"Product ID": 3, "Title": "Custom Engraved Dog Tag", "Price": 299, "Description": "Stainless steel personalized ID tag.", "Image 1": ""}
-    ])
+def cart_count() -> int:
+    return sum(st.session_state.cart.values())
 
-def save_order_to_sheet(order_data):
-    try:
-        conn = get_db_connection()
-        df_orders = conn.read(worksheet="orders", ttl=0)
-        new_row = pd.DataFrame([order_data])
-        updated_df = pd.concat([df_orders, new_row], ignore_index=True)
-        conn.update(worksheet="orders", data=updated_df)
-        return True
-    except Exception as e:
-        st.error(f"Failed to save order to Google Sheets: {e}")
-        return False
 
-def add_product_to_sheet(prod_data):
-    try:
-        conn = get_db_connection()
-        df_prods = conn.read(worksheet="products", ttl=0)
-        new_row = pd.DataFrame([prod_data])
-        updated_df = pd.concat([df_prods, new_row], ignore_index=True)
-        conn.update(worksheet="products", data=updated_df)
-        return True
-    except Exception as e:
-        st.error(f"Failed to add product to Google Sheets: {e}")
-        return False
+def add_to_cart(pid: str, qty: int = 1):
+    st.session_state.cart[pid] = st.session_state.cart.get(pid, 0) + qty
+    st.toast("Added to cart")
 
-def upload_image_to_github(file_bytes, filename):
-    try:
-        github_cfg = st.secrets.get("github", {})
-        GITHUB_TOKEN = github_cfg.get("token")
-        REPO = github_cfg.get("repo")
-        BRANCH = github_cfg.get("branch", "main")
-        
-        if not GITHUB_TOKEN or not REPO:
-            st.error("GitHub credentials missing in secrets.")
-            return None
-            
-        url = f"https://api.github.com/repos/{REPO}/contents/images/{filename}"
-        encoded_content = base64.b64encode(file_bytes).decode("utf-8")
-        
-        payload = {
-            "message": f"Upload product asset {filename} via Cartel Shop Admin",
-            "content": encoded_content,
-            "branch": BRANCH
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github+json"
-        }
-        
-        response = requests.put(url, json=payload, headers=headers)
-        if response.status_code in [200, 201]:
-            return f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/images/{filename}"
+
+def footer():
+    contact = f"WhatsApp: +{WHATSAPP_NUMBER}"
+    if SUPPORT_EMAIL:
+        contact += f" &nbsp;|&nbsp; {html.escape(SUPPORT_EMAIL)}"
+    st.markdown(f"<div class='foot'>{SHOP_NAME} &nbsp;|&nbsp; {contact}</div>", unsafe_allow_html=True)
+
+
+# =====================================================================
+# ADMIN DASHBOARD
+# =====================================================================
+def admin_page():
+    st.markdown(f"<div class='hdr'><div><div class='hi'>Admin</div><div class='nm'>{SHOP_NAME} Dashboard</div></div></div>",
+                unsafe_allow_html=True)
+    if not st.session_state.get("is_admin"):
+        with st.form("admin_login"):
+            pw = st.text_input("Admin password", type="password")
+            if st.form_submit_button("Login", type="primary"):
+                if pw == ADMIN_PASSWORD:
+                    st.session_state.is_admin = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect password")
+        return
+
+    tab_orders, tab_products = st.tabs(["Orders", "Manage Products"])
+
+    # ---- Orders ----
+    with tab_orders:
+        if st.button("Refresh orders", key="ref_orders"):
+            st.session_state.pop("admin_orders", None)
+        if "admin_orders" not in st.session_state:
+            st.session_state.admin_orders = read_sheet("orders", ORDER_COLS)
+        odf = st.session_state.admin_orders.copy()
+        if odf.empty:
+            st.info("No orders yet.")
         else:
-            st.error(f"GitHub Upload Error: {response.json().get('message')}")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to GitHub: {e}")
-        return None
+            odf = odf.iloc[::-1].reset_index(drop=True)
+            odf["Status"] = odf["Status"].fillna("Pending")
+            edited = st.data_editor(
+                odf, hide_index=True, use_container_width=True, key="orders_editor",
+                disabled=[c for c in ORDER_COLS if c != "Status"],
+                column_config={"Status": st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS, required=True)},
+            )
+            if st.button("Save status changes", type="primary"):
+                new = edited.iloc[::-1].reset_index(drop=True)
+                write_sheet("orders", new[ORDER_COLS])
+                st.session_state.admin_orders = new[ORDER_COLS]
+                st.success("Orders updated")
 
-# ==========================================
-# 4. NAVIGATION SHELL & ROUTING
-# ==========================================
-def render_nav_shell():
-    nav_html = """
-    <div class="nav-container">
-        <a href="?tab=Home" class="nav-item">🏠<br>Home</a>
-        <a href="?tab=Cart" class="nav-item">🛒<br>Cart</a>
-        <a href="?tab=Profile" class="nav-item">👤<br>Profile</a>
-        <a href="?tab=Admin" class="nav-item">⚙️<br>Admin</a>
-    </div>
-    """
-    st.markdown(nav_html, unsafe_allow_html=True)
+    # ---- Products ----
+    with tab_products:
+        st.markdown("**Add new product**")
+        with st.form("add_product", clear_on_submit=True):
+            title = st.text_input("Title")
+            price = st.number_input("Price", min_value=0.0, step=1.0)
+            desc = st.text_area("Description")
+            files = st.file_uploader("Images (up to 3)", type=["png", "jpg", "jpeg", "webp"],
+                                     accept_multiple_files=True)
+            urls = st.text_input("...or image URL (optional, used if no upload)")
+            if st.form_submit_button("Upload product", type="primary"):
+                if not title.strip():
+                    st.error("Title is required")
+                else:
+                    imgs = [process_upload(f) for f in (files or [])[:3]]
+                    if not imgs and urls.strip():
+                        imgs = [urls.strip()]
+                    imgs += [""] * (3 - len(imgs))
+                    pdf = read_sheet("products", PRODUCT_COLS)
+                    row = {"Products": len(pdf) + 1, "Product ID": f"P{int(time.time())}",
+                           "Title": title.strip(), "Price": price, "Description": desc.strip(),
+                           "Image 1": imgs[0], "Image 2": imgs[1], "Image 3": imgs[2], "Active": "Yes"}
+                    pdf = pd.concat([pdf, pd.DataFrame([row])], ignore_index=True)
+                    write_sheet("products", pdf)
+                    st.session_state.pop("products_df", None)
+                    st.session_state.pop("admin_products", None)
+                    st.success("Product added")
 
-query_params = st.query_params
-current_tab = query_params.get("tab", "Home")
+        st.divider()
+        st.markdown("**Manage products**")
+        if "admin_products" not in st.session_state:
+            st.session_state.admin_products = read_sheet("products", PRODUCT_COLS)
+        pdf = st.session_state.admin_products.copy()
+        if pdf.empty:
+            st.info("No products yet.")
+        else:
+            view = pdf[["Product ID", "Title", "Price", "Description"]].copy()
+            view["Active"] = pdf["Active"].apply(is_active)
+            view["Delete"] = False
+            edited = st.data_editor(
+                view, hide_index=True, use_container_width=True, key="products_editor",
+                disabled=["Product ID"],
+                column_config={"Price": st.column_config.NumberColumn("Price", min_value=0.0),
+                               "Active": st.column_config.CheckboxColumn("Active"),
+                               "Delete": st.column_config.CheckboxColumn("Delete")},
+            )
+            if st.button("Save product changes", type="primary"):
+                out = pdf.copy()
+                for i in range(len(out)):
+                    out.loc[i, "Title"] = edited.loc[i, "Title"]
+                    out.loc[i, "Price"] = edited.loc[i, "Price"]
+                    out.loc[i, "Description"] = edited.loc[i, "Description"]
+                    out.loc[i, "Active"] = "Yes" if edited.loc[i, "Active"] else "No"
+                keep = ~edited["Delete"].fillna(False).values
+                out = out[keep].reset_index(drop=True)
+                out["Products"] = range(1, len(out) + 1)
+                write_sheet("products", out[PRODUCT_COLS])
+                st.session_state.admin_products = out[PRODUCT_COLS]
+                st.session_state.pop("products_df", None)
+                st.success("Products updated")
 
-# ==========================================
-# 5. PAGE VIEWS
-# ==========================================
+            with st.expander("Replace product images"):
+                labels = {f"{r['Title']} ({r['Product ID']})": r["Product ID"] for _, r in pdf.iterrows()}
+                sel = st.selectbox("Product", list(labels.keys()))
+                newf = st.file_uploader("New images (up to 3)", type=["png", "jpg", "jpeg", "webp"],
+                                        accept_multiple_files=True, key="repl_imgs")
+                if st.button("Replace images") and newf:
+                    imgs = [process_upload(f) for f in newf[:3]]
+                    imgs += [""] * (3 - len(imgs))
+                    idx = pdf.index[pdf["Product ID"] == labels[sel]][0]
+                    pdf.loc[idx, ["Image 1", "Image 2", "Image 3"]] = imgs
+                    write_sheet("products", pdf[PRODUCT_COLS])
+                    st.session_state.admin_products = pdf[PRODUCT_COLS]
+                    st.session_state.pop("products_df", None)
+                    st.success("Images replaced")
 
-if current_tab == "Home":
-    # Top header bar matching reference design
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        st.markdown("### 🛒 Cartel Shop")
-        st.caption("Find your favorite items instantly")
-    with col2:
-        st.markdown("🔔")
+    st.write("")
+    if st.button("Logout"):
+        st.session_state.is_admin = False
+        st.rerun()
 
-    # Promo Banner Section
+
+# =====================================================================
+# CUSTOMER PAGES
+# =====================================================================
+@st.dialog("Product details")
+def product_dialog(row):
+    pid = str(row["Product ID"])
+    imgs = [img_of(row, i) for i in (1, 2, 3) if img_of(row, i)]
+    if imgs:
+        cols = st.columns(len(imgs))
+        for c, im in zip(cols, imgs):
+            c.image(im, use_container_width=True)
+    st.markdown(f"### {row['Title']}")
+    st.markdown(f"**{fmt(to_price(row['Price']))}**")
+    if str(row.get("Description") or "").strip() and str(row.get("Description")) != "nan":
+        st.write(row["Description"])
+    qty = st.number_input("Quantity", min_value=1, max_value=99, value=1, key=f"dq_{pid}")
+    if st.button("Add to Cart", type="primary", key=f"dadd_{pid}"):
+        add_to_cart(pid, int(qty))
+        st.rerun()
+
+
+def home_page():
+    products = load_products()
+    products = products[products["Active"].apply(is_active)].reset_index(drop=True)
+
+    st.markdown(f"""
+    <div class='hdr'>
+      <div><div class='hi'>Welcome to</div><div class='nm'>{html.escape(SHOP_NAME)}</div></div>
+      <div class='badge'>
+        <svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='#111827' stroke-width='1.8'
+         stroke-linecap='round' stroke-linejoin='round'><path d='M6 7h12l-1 12H7L6 7z'/><path d='M9 7a3 3 0 0 1 6 0'/></svg>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    q = st.text_input("Search", placeholder="Search products", label_visibility="collapsed", key="search_q")
+
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #1e1b4b, #312e81); padding: 20px; border-radius: 20px; color: white; margin-bottom: 20px;">
-        <h4 style="margin: 0; color: #ffffff;">Special Discount</h4>
-        <h2 style="margin: 5px 0; color: #f97316;">50% OFF</h2>
-        <p style="margin: 0; font-size: 12px; color: #cbd5e1;">On all seasonal collection items!</p>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class='banner'><div class='t'>Shop the<br>new products</div>
+    <div class='s'>Fresh arrivals, delivered to your door</div></div>""", unsafe_allow_html=True)
 
-    st.markdown("### Popular Products")
-    
-    df_products = load_products()
-    
-    # Display products in a clean 2-column grid layout matching the design reference
-    for i in range(0, len(df_products), 2):
+    st.markdown("<div class='sec'><span class='a'>New Arrivals</span></div>", unsafe_allow_html=True)
+
+    if q.strip():
+        ql = q.strip().lower()
+        mask = products["Title"].astype(str).str.lower().str.contains(ql, regex=False) | \
+            products["Description"].astype(str).str.lower().str.contains(ql, regex=False)
+        products = products[mask].reset_index(drop=True)
+
+    if products.empty:
+        st.info("No products available right now.")
+        return
+
+    # newest first
+    products = products.iloc[::-1].reset_index(drop=True)
+    for i in range(0, len(products), 2):
         cols = st.columns(2)
-        for j in range(2):
-            if i + j < len(df_products):
-                row = df_products.iloc[i + j]
-                with cols[j]:
-                    with st.container():
-                        st.markdown('<div class="product-card">', unsafe_allow_html=True)
-                        img_url = row.get("Image 1", "")
-                        if pd.notna(img_url) and str(img_url).startswith("http"):
-                            st.image(img_url, use_column_width=True)
-                        else:
-                            st.markdown("📦")
-                        
-                        title = row.get('Title', 'Product')
-                        price = row.get('Price', 0)
-                        
-                        st.markdown(f"**{title}**")
-                        st.markdown(f"<span style='color: #ff5722; font-weight: bold;'>₹{price}</span>", unsafe_allow_html=True)
-                        
-                        if st.button("Add", key=f"grid_add_{i+j}"):
-                            item = {
-                                "id": row.get('Product ID', i+j),
-                                "name": title,
-                                "price": float(price)
-                            }
-                            st.session_state.cart.append(item)
-                            st.success(f"Added {title}!")
-                        st.markdown('</div>', unsafe_allow_html=True)
+        for col, j in zip(cols, (i, i + 1)):
+            if j >= len(products):
+                continue
+            row = products.loc[j]
+            pid = str(row["Product ID"])
+            src = img_of(row, 1) or PLACEHOLDER_IMG
+            with col:
+                st.markdown(f"""
+                <div class='pc'>
+                  <div class='pimg'><img src="{html.escape(src, quote=True)}"></div>
+                  <div class='pt'>{html.escape(str(row['Title']))}</div>
+                  <div class='pp'>{fmt(to_price(row['Price']))}</div>
+                </div>""", unsafe_allow_html=True)
+                b1, b2 = st.columns(2)
+                if b1.button("View", key=f"v_{pid}"):
+                    product_dialog(row)
+                if b2.button("Add", key=f"a_{pid}", type="primary"):
+                    add_to_cart(pid)
+                    st.rerun()
 
-elif current_tab == "Cart":
-    st.markdown("## 🛒 My Cart")
-    
-    if not st.session_state.cart:
-        st.info("Your cart is currently empty.")
-    else:
-        total = 0
-        for i, item in enumerate(st.session_state.cart):
-            col1, col2 = st.columns([3, 1])
-            col1.write(f"**{item['name']}** - ₹{item['price']}")
-            if col2.button("❌", key=f"rem_{i}"):
-                st.session_state.cart.pop(i)
-                st.rerun()
-            total += item['price']
-            
-        st.divider()
-        st.markdown(f"### Total Amount: ₹{total}")
-        
-        with st.form("checkout_form"):
-            st.markdown("### Delivery Details")
-            c_name = st.text_input("Customer Name")
-            c_phone = st.text_input("Phone Number")
-            c_pin = st.text_input("PIN Code")
-            c_address = st.text_area("Full Address")
-            
-            checkout_submitted = st.form_submit_button("Proceed to Checkout via WhatsApp", type="primary")
-            if checkout_submitted:
-                if not c_name or not c_phone or not c_address:
-                    st.error("Please fill in your name, phone number, and address.")
-                else:
-                    items_str = ", ".join([f"{i['name']} (₹{i['price']})" for i in st.session_state.cart])
-                    order_id = f"ORD-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    
-                    order_record = {
-                        "Order ID": order_id,
-                        "TimeStamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Custumer Name": c_name,
-                        "Phone Number": c_phone,
-                        "PIN Code": c_pin,
-                        "Full Adress": c_address,
-                        "Order Items & Total": f"{items_str} | Total: ₹{total}",
-                        "Status": "Pending"
-                    }
-                    
-                    save_order_to_sheet(order_record)
-                    
-                    order_summary = f"Hello Cartel Shop, new order {order_id}:\n\nName: {c_name}\nPhone: {c_phone}\nAddress: {c_address}\n\nItems:\n{items_str}\nTotal: ₹{total}"
-                    encoded_message = urllib.parse.quote(order_summary)
-                    whatsapp_url = f"https://wa.me/{WHATSAPP_NUMBER}?text={encoded_message}"
-                    
-                    st.markdown(f'<meta http-equiv="refresh" content="0;url={whatsapp_url}">', unsafe_allow_html=True)
-                    st.success("Order logged and redirecting to WhatsApp...")
 
-elif current_tab == "Profile":
-    st.markdown("## 👤 User Profile")
-    st.write("Manage your shipping addresses and account details.")
-    
-    with st.form("profile_form"):
-        st.text_input("Full Name")
-        st.text_input("Phone Number")
-        st.text_area("Shipping Address")
-        submitted = st.form_submit_button("Save Profile")
-        if submitted:
-            st.success("Profile details saved successfully!")
+def cart_page():
+    st.markdown("<div class='hdr'><div class='nm'>My Cart</div></div>", unsafe_allow_html=True)
 
-elif current_tab == "Admin":
-    query_secret = query_params.get("secret", "")
-    
-    if query_secret == ADMIN_SECRET or st.session_state.get("admin_authenticated"):
-        st.session_state.admin_authenticated = True
-        
-        st.markdown("""
-        <div class="admin-banner">
-            <h2>⚙️ Cartel Shop - Admin Dashboard</h2>
-            <p>Manage customer orders and upload new products.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # --- SECTION 1: OLD ORDERS ---
-        st.markdown("### 📦 Customer Orders")
-        try:
-            conn = get_db_connection()
-            df_orders = conn.read(worksheet="orders", ttl=0)
-            if df_orders is not None and not df_orders.empty:
-                st.dataframe(df_orders, use_container_width=True)
-            else:
-                st.info("No orders found in the spreadsheet yet.")
-        except Exception as e:
-            st.warning(f"Could not load orders: {e}")
-            
-        st.divider()
-        
-        # --- SECTION 2: MANAGE & ADD PRODUCTS ---
-        st.markdown("### ➕ Add New Product")
-        with st.form("add_product_form"):
-            p_id = st.text_input("Product ID (e.g. 104)")
-            p_title = st.text_input("Product Title")
-            p_price = st.number_input("Price (₹)", min_value=0.0, step=10.0)
-            p_desc = st.text_area("Description")
-            
-            uploaded_file = st.file_uploader("Product Image", type=["jpg", "png", "jpeg"])
-            
-            prod_submitted = st.form_submit_button("Upload & Save Product")
-            if prod_submitted:
-                if not p_title or not p_id:
-                    st.error("Please provide a Product ID and Title.")
-                else:
-                    image_url = ""
-                    if uploaded_file:
-                        bytes_data = uploaded_file.getvalue()
-                        filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uploaded_file.name}"
-                        image_url = upload_image_to_github(bytes_data, filename)
-                    
-                    new_prod_record = {
-                        "Products": p_title,
-                        "Product ID": p_id,
-                        "Title": p_title,
-                        "Price": p_price,
-                        "Description": p_desc,
-                        "Image 1": image_url if image_url else "",
-                        "Image 2": "",
-                        "Image 3": "",
-                        "Active": "TRUE"
-                    }
-                    
-                    if add_product_to_sheet(new_prod_record):
-                        st.success(f"Product '{p_title}' added successfully!")
-                        st.rerun()
-                        
-        st.divider()
-        if st.button("Lock / Logout Admin"):
-            st.session_state.admin_authenticated = False
-            st.query_params.clear()
+    if st.session_state.last_order:
+        o = st.session_state.last_order
+        st.success(f"Order {o['id']} placed successfully.")
+        st.link_button("Send order details on WhatsApp", o["wa"], type="primary")
+        if st.button("Done"):
+            st.session_state.last_order = None
             st.rerun()
-            
-    else:
-        st.markdown("""
-        <div class="admin-banner">
-            <h2>Admin Portal</h2>
-            <p>Enter the secure password to proceed.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        entered_secret = st.text_input("Admin Secret Password", type="password", key="admin_secret_input")
-        if st.button("Access Dashboard"):
-            if entered_secret == ADMIN_SECRET:
-                st.session_state.admin_authenticated = True
-                st.rerun()
-            else:
-                st.error("Invalid secret password.")
+        return
 
-# Render persistent bottom navigation bar
-render_nav_shell()
+    cart = st.session_state.cart
+    if not cart:
+        st.info("Your cart is empty.")
+        footer()
+        return
+
+    products = load_products().set_index(load_products()["Product ID"].astype(str))
+    subtotal = 0.0
+    for pid, qty in list(cart.items()):
+        if pid not in products.index:
+            cart.pop(pid, None)
+            continue
+        row = products.loc[pid]
+        price = to_price(row["Price"])
+        subtotal += price * qty
+        src = img_of(row, 1) or PLACEHOLDER_IMG
+        left, right = st.columns([3, 2])
+        left.markdown(f"""
+        <div class='cartrow'><img src="{html.escape(src, quote=True)}">
+        <div><div class='ct'>{html.escape(str(row['Title']))}</div>
+        <div class='cp'>{fmt(price)}</div></div></div>""", unsafe_allow_html=True)
+        with right:
+            m, n, p = st.columns(3)
+            if m.button("-", key=f"m_{pid}"):
+                if qty <= 1:
+                    cart.pop(pid)
+                else:
+                    cart[pid] = qty - 1
+                st.rerun()
+            n.markdown(f"<div style='text-align:center;font-weight:800;padding-top:.45rem'>{qty}</div>",
+                       unsafe_allow_html=True)
+            if p.button("+", key=f"p_{pid}"):
+                cart[pid] = qty + 1
+                st.rerun()
+
+    if not cart:
+        st.rerun()
+
+    st.markdown(f"""
+    <div class='sumbox'>
+      <div class='r'><span>Items</span><span>{cart_count()}</span></div>
+      <div class='r tot'><span>Total</span><span>{fmt(subtotal)}</span></div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("**Delivery details**")
+    with st.form("checkout"):
+        name = st.text_input("Full name")
+        phone = st.text_input("Phone number", max_chars=10)
+        pin = st.text_input("PIN code", max_chars=6)
+        addr = st.text_area("Full address")
+        submit = st.form_submit_button("Place order", type="primary")
+
+    if submit:
+        if not name.strip() or not addr.strip():
+            st.error("Please enter your name and address.")
+        elif not (phone.isdigit() and len(phone) == 10):
+            st.error("Enter a valid 10-digit phone number.")
+        elif not (pin.isdigit() and len(pin) == 6):
+            st.error("Enter a valid 6-digit PIN code.")
+        else:
+            # fetch fresh product data for the final decision
+            fresh = load_products(force=True)
+            fresh = fresh.set_index(fresh["Product ID"].astype(str))
+            lines, total = [], 0.0
+            for pid, qty in cart.items():
+                if pid in fresh.index:
+                    r = fresh.loc[pid]
+                    pr = to_price(r["Price"])
+                    total += pr * qty
+                    lines.append(f"{r['Title']} x{qty} = {fmt(pr * qty)}")
+            items_txt = "; ".join(lines) + f" | Total: {fmt(total)}"
+            order_id = "CS" + datetime.now().strftime("%y%m%d%H%M%S")
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            odf = read_sheet("orders", ORDER_COLS)
+            new = pd.DataFrame([{"Order ID": order_id, "TimeStamp": ts, "Custumer Name": name.strip(),
+                                 "Phone Number": phone, "PIN Code": pin, "Full Adress": addr.strip(),
+                                 "Order Items & Total": items_txt, "Status": "Pending"}])
+            write_sheet("orders", pd.concat([odf, new], ignore_index=True))
+            msg = (f"New order {order_id} - {SHOP_NAME}\nName: {name.strip()}\nPhone: {phone}\n"
+                   f"PIN: {pin}\nAddress: {addr.strip()}\nItems: {items_txt}")
+            wa = f"https://wa.me/{WHATSAPP_NUMBER}?text=" + urllib.parse.quote(msg)
+            st.session_state.last_order = {"id": order_id, "wa": wa}
+            st.session_state.cart = {}
+            st.rerun()
+    footer()
+
+
+def profile_page():
+    st.markdown("<div class='hdr'><div class='nm'>Profile</div></div>", unsafe_allow_html=True)
+    st.markdown("**My orders**")
+    phone = st.text_input("Enter your phone number", max_chars=10, key="prof_phone")
+    if phone and phone.isdigit() and len(phone) == 10:
+        odf = read_sheet("orders", ORDER_COLS)
+        mine = odf[odf["Phone Number"].astype(str).str.replace(r"\.0$", "", regex=True) == phone]
+        if mine.empty:
+            st.info("No orders found for this number.")
+        for _, o in mine.iloc[::-1].iterrows():
+            status = o["Status"] if pd.notna(o["Status"]) else "Pending"
+            st.markdown(f"""
+            <div class='sumbox'><div class='r'><span><b>{html.escape(str(o['Order ID']))}</b></span>
+            <span class='ostat'>{html.escape(str(status))}</span></div>
+            <div class='r'><span>{html.escape(str(o['Order Items & Total']))}</span></div>
+            <div class='r'><span>{html.escape(str(o['TimeStamp']))}</span></div></div>""",
+                        unsafe_allow_html=True)
+    st.markdown("**Need help?**")
+    st.link_button("Chat on WhatsApp", f"https://wa.me/{WHATSAPP_NUMBER}", type="primary")
+    footer()
+
+
+def bottom_nav():
+    with st.container(key="bottomnav"):
+        c1, c2, c3 = st.columns(3)
+        items = [(c1, "Home", ":material/home:", "Home"),
+                 (c2, "Cart", ":material/shopping_bag:", f"Cart ({cart_count()})" if cart_count() else "Cart"),
+                 (c3, "Profile", ":material/person:", "Profile")]
+        for col, key, icon, label in items:
+            with col:
+                active = st.session_state.tab == key
+                if st.button(label, icon=icon, key=f"nav_{key}", type="primary" if active else "secondary"):
+                    st.session_state.tab = key
+                    st.rerun()
+
+
+# --- ROUTER ---
+if st.query_params.get("page") == ADMIN_PAGE_KEY:
+    admin_page()
+else:
+    tab = st.session_state.tab
+    if tab == "Home":
+        home_page()
+        footer()
+    elif tab == "Cart":
+        cart_page()
+    else:
+        profile_page()
+    bottom_nav()
