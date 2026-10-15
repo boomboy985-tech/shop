@@ -4,27 +4,26 @@ from datetime import datetime
 import json
 import base64
 import urllib.parse
+import requests
+from streamlit_gsheets import GSheetsConnection
 
 # ==========================================
 # 1. PAGE CONFIGURATION & MOBILE WIDTH
 # ==========================================
 st.set_page_config(
-    page_title="Cadet Cartel Store",
-    page_icon="🛡️",
+    page_title="Cartel Store",
+    page_icon="shop",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# Apply mobile-width container wrapper and custom dark theme styling
 MOBILE_WIDTH_CSS = """
 <style>
-    /* Main App Background & Font */
     .stApp {
         background-color: #0f1117;
         color: #f0f2f6;
     }
     
-    /* Mobile Shell Wrapper */
     @media (min-width: 768px) {
         .main .block-container {
             max-width: 480px;
@@ -38,7 +37,6 @@ MOBILE_WIDTH_CSS = """
         }
     }
     
-    /* Bottom Navigation Bar Styles */
     .nav-container {
         position: fixed;
         bottom: 0;
@@ -68,7 +66,6 @@ MOBILE_WIDTH_CSS = """
         color: #58a6ff;
     }
     
-    /* Admin Banner */
     .admin-banner {
         background: linear-gradient(135deg, #1f6feb, #58a6ff);
         padding: 20px;
@@ -88,11 +85,67 @@ if "cart" not in st.session_state:
     st.session_state.cart = []
 if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
-if "current_tab" not in st.session_state:
-    st.session_state.current_tab = "Home"
 
 # ==========================================
-# 3. NAVIGATION SHELL & ANIMATED BOTTOM BAR
+# 3. DATABASE & GITHUB HELPER FUNCTIONS
+# ==========================================
+@st.cache_resource
+def get_db_connection():
+    return st.connection("gsheets", type=GSheetsConnection)
+
+def load_products():
+    try:
+        conn = get_db_connection()
+        df = conn.read(worksheet="Products", ttl=5)
+        if df is not None and not df.empty:
+            return df
+    except Exception as e:
+        st.warning(f"Could not load live inventory from Google Sheets: {e}")
+    
+    # Fallback default products if sheet is empty/unconfigured
+    return pd.DataFrame([
+        {"id": 1, "name": "NCC Cadet Lanyard", "price": 150, "desc": "Standard regulation lanyard.", "image": ""},
+        {"id": 2, "name": "Custom Name Badge", "price": 250, "desc": "Engraved acrylic identification badge.", "image": ""},
+        {"id": 3, "name": "Beret Cap & Badge", "price": 350, "desc": "Woolen beret with metallic cap badge.", "image": ""}
+    ])
+
+def upload_image_to_github(file_bytes, filename):
+    try:
+        github_cfg = st.secrets.get("github", {})
+        GITHUB_TOKEN = github_cfg.get("token")
+        REPO = github_cfg.get("repo")
+        BRANCH = github_cfg.get("branch", "main")
+        
+        if not GITHUB_TOKEN or not REPO:
+            st.error("GitHub credentials missing in secrets.")
+            return None
+            
+        url = f"https://api.github.com/repos/{REPO}/contents/images/{filename}"
+        encoded_content = base64.b64encode(file_bytes).decode("utf-8")
+        
+        payload = {
+            "message": f"Upload product asset {filename} via Cadet Cartel Admin",
+            "content": encoded_content,
+            "branch": BRANCH
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json"
+        }
+        
+        response = requests.put(url, json=payload, headers=headers)
+        if response.status_code in [200, 201]:
+            return f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/images/{filename}"
+        else:
+            st.error(f"GitHub Upload Error: {response.json().get('message')}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to GitHub: {e}")
+        return None
+
+# ==========================================
+# 4. NAVIGATION SHELL & ROUTING
 # ==========================================
 def render_nav_shell():
     nav_html = """
@@ -106,46 +159,47 @@ def render_nav_shell():
     """
     st.markdown(nav_html, unsafe_allow_html=True)
 
-# Parse query params for routing
 query_params = st.query_params
 current_tab = query_params.get("tab", "Home")
 
 # ==========================================
-# 4. VIEW ROUTERS
+# 5. PAGE VIEWS
 # ==========================================
 
 if current_tab == "Home":
     st.markdown("## 🛡️ Cadet Cartel")
-    st.markdown("Your one-stop destination for high-quality uniform accessories, custom badges, and tactical gear.")
+    st.markdown("Your premier destination for high-quality uniform accessories, custom badges, and specialized tactical gear.")
     
-    st.info("💡 Use the bottom navigation bar to browse products, check your cart, or access your profile.")
+    st.info("💡 Use the bottom navigation bar to explore the shop, review your cart, or manage your account.")
     
-    # Featured Banner
     st.markdown("""
     <div style="background: #21262d; padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-top: 15px;">
         <h3>Featured Collection</h3>
-        <p>Custom NCC accessories and engraved identification cards built to precise specifications.</p>
+        <p>Custom NCC accessories and engraved identification cards built to rigorous specifications.</p>
     </div>
     """, unsafe_allow_html=True)
 
 elif current_tab == "Shop":
     st.markdown("## 🛍️ Product Catalog")
+    df_products = load_products()
     
-    # Sample Products Layout
-    products = [
-        {"id": 1, "name": "NCC Cadet Lanyard", "price": 150, "desc": "Standard regulation lanyard."},
-        {"id": 2, "name": "Custom Name Badge", "price": 250, "desc": "Engraved acrylic identification badge."},
-        {"id": 3, "name": "Beret Cap & Badge", "price": 350, "desc": "Woolen beret with metallic cap badge."}
-    ]
-    
-    for p in products:
+    for idx, row in df_products.iterrows():
         with st.container():
-            st.markdown(f"### {p['name']}")
-            st.write(p['desc'])
-            st.write(f"**Price:** ₹{p['price']}")
-            if st.button(f"Add to Cart", key=f"add_{p['id']}"):
-                st.session_state.cart.append(p)
-                st.success(f"Added {p['name']} to cart!")
+            if "image" in row and pd.notna(row["image"]) and str(row["image"]).startswith("http"):
+                st.image(row["image"], use_column_width=True)
+            
+            st.markdown(f"### {row.get('name', 'Product')}")
+            st.write(row.get('desc', ''))
+            st.write(f"**Price:** ₹{row.get('price', 0)}")
+            
+            if st.button(f"Add to Cart", key=f"add_{idx}"):
+                item = {
+                    "id": row.get('id', idx),
+                    "name": row.get('name'),
+                    "price": float(row.get('price', 0))
+                }
+                st.session_state.cart.append(item)
+                st.success(f"Added {row.get('name')} to cart!")
             st.divider()
 
 elif current_tab == "Cart":
@@ -163,12 +217,10 @@ elif current_tab == "Cart":
                 st.rerun()
             total += item['price']
             
-        st.divider(
-        )
+        st.divider()
         st.markdown(f"### Total Amount: ₹{total}")
         
         if st.button("Proceed to Checkout via WhatsApp", type="primary"):
-            # Format WhatsApp order text
             order_summary = "Hello Cadet Cartel, I would like to place an order:\n\n"
             for item in st.session_state.cart:
                 order_summary += f"- {item['name']} (₹{item['price']})\n"
@@ -181,7 +233,7 @@ elif current_tab == "Cart":
 
 elif current_tab == "Profile":
     st.markdown("## 👤 User Profile")
-    st.write("Manage your shipping addresses, view past orders, and configure preferences.")
+    st.write("Manage your shipping addresses and preferences.")
     
     with st.form("profile_form"):
         st.text_input("Full Name")
@@ -189,17 +241,15 @@ elif current_tab == "Profile":
         st.text_area("Shipping Address")
         submitted = st.form_submit_button("Save Profile")
         if submitted:
-            st.success("Profile updated successfully!")
+            st.success("Profile details saved successfully!")
 
 elif current_tab == "Admin":
     st.markdown(MOBILE_WIDTH_CSS, unsafe_allow_html=True)
     
-    # Retrieve steamedy secret from Streamlit secrets, defaulting if missing
-    STEAMEDY_ADMIN_SECRET = st.secrets.get("steamedy", {}).get("secret", "steamedy123")
-    
+    ADMIN_SECRET = "adithyan1234"
     query_secret = query_params.get("secret", "")
     
-    if query_secret == STEAMEDY_ADMIN_SECRET or st.session_state.get("admin_authenticated"):
+    if query_secret == ADMIN_SECRET or st.session_state.get("admin_authenticated"):
         st.session_state.admin_authenticated = True
         
         st.markdown("""
@@ -209,12 +259,22 @@ elif current_tab == "Admin":
         </div>
         """, unsafe_allow_html=True)
         
-        st.markdown("### Store Statistics")
+        st.markdown("### Store Overview")
         col1, col2 = st.columns(2)
-        col1.metric("Total Orders", "142")
-        col2.metric("Revenue", "₹38,450")
+        col1.metric("Catalog Status", "Connected")
+        col2.metric("GitHub Storage", "Active")
         
-        st.markdown("### Quick Actions")
+        st.markdown("### Upload New Product Image")
+        uploaded_file = st.file_uploader("Choose an image", type=["jpg", "png", "jpeg"])
+        if uploaded_file and st.button("Upload to GitHub Repository"):
+            bytes_data = uploaded_file.getvalue()
+            filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uploaded_file.name}"
+            public_url = upload_image_to_github(bytes_data, filename)
+            if public_url:
+                st.success("Image uploaded successfully!")
+                st.code(public_url)
+                
+        st.divider()
         if st.button("Lock / Logout Admin"):
             st.session_state.admin_authenticated = False
             st.query_params.clear()
@@ -228,13 +288,13 @@ elif current_tab == "Admin":
         </div>
         """, unsafe_allow_html=True)
         
-        entered_secret = st.text_input("Admin Secret Password", type="password", key="steamedy_secret_input")
+        entered_secret = st.text_input("Admin Secret Password", type="password", key="admin_secret_input")
         if st.button("Access Dashboard"):
-            if entered_secret == STEAMEDY_ADMIN_SECRET:
+            if entered_secret == ADMIN_SECRET:
                 st.session_state.admin_authenticated = True
                 st.rerun()
             else:
                 st.error("Invalid secret password.")
 
-# Render persistent bottom navigation bar across pages
+# Render persistent bottom navigation bar
 render_nav_shell()
