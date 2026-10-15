@@ -13,9 +13,9 @@ from streamlit_gsheets import GSheetsConnection
 # --- CONFIGURATION & CONSTANTS ---
 SHOP_NAME = "Cartel Shop"
 WHATSAPP_NUMBER = "918089523293"  # WhatsApp business number with country code
-SUPPORT_EMAIL = ""  # optional: add a support email to show in the footer
-ADMIN_PAGE_KEY = "rootcartel"  # open the admin dashboard with  ?page=rootcartel
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "cartel@123")  # set in secrets.toml
+SUPPORT_EMAIL = ""  
+ADMIN_PAGE_KEY = "rootcartel"  # Open admin dashboard via ?page=rootcartel
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "adithyan1234")
 CURRENCY = "Rs."
 
 ORDER_COLS = ["Order ID", "TimeStamp", "Custumer Name", "Phone Number",
@@ -24,13 +24,13 @@ PRODUCT_COLS = ["Products", "Product ID", "Title", "Price", "Description",
                 "Image 1", "Image 2", "Image 3", "Active"]
 STATUS_OPTIONS = ["Pending", "Confirmed", "In Transit", "Delivered", "Cancelled"]
 
-st.set_page_config(page_title=SHOP_NAME, page_icon=None, layout="centered",
+st.set_page_config(page_title=SHOP_NAME, page_icon="🛒", layout="centered",
                    initial_sidebar_state="collapsed")
 
 # --- STYLES ---
 st.markdown("""
 <style>
-:root { --accent:#F97316; --accent-dark:#EA580C; --ink:#111827; --muted:#6B7280; --bg:#F3F4F8; }
+:root { --accent:#FF5722; --accent-dark:#E64A19; --ink:#111827; --muted:#6B7280; --bg:#F4F6F9; }
 #MainMenu, header, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {display:none !important;}
 .stApp {background:var(--bg);}
 .block-container {padding:0.8rem 1rem 7rem 1rem !important; max-width:520px;}
@@ -42,16 +42,15 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
 .hdr .badge {width:42px; height:42px; border-radius:14px; background:#fff; display:flex;
   align-items:center; justify-content:center; box-shadow:0 2px 10px rgba(0,0,0,.06);}
 
-.banner {background:linear-gradient(135deg,#F97316,#FDBA74); border-radius:20px; padding:1.2rem 1.2rem;
+.banner {background:linear-gradient(135deg,#1e1b4b,#312e81); border-radius:20px; padding:1.2rem 1.2rem;
   margin:.4rem 0 1rem 0; color:#fff; position:relative; overflow:hidden;}
 .banner::after {content:""; position:absolute; right:-30px; top:-30px; width:140px; height:140px;
-  border-radius:50%; background:rgba(255,255,255,.18);}
-.banner .t {font-size:1.3rem; font-weight:800; line-height:1.2;}
-.banner .s {font-size:.85rem; opacity:.95; margin-top:.3rem;}
+  border-radius:50%; background:rgba(255,255,255,.08);}
+.banner .t {font-size:1.1rem; color:#cbd5e1; font-weight:600;}
+.banner .s {font-size:1.5rem; font-weight:800; color:#f97316; margin-top:.2rem;}
 
 .sec {display:flex; justify-content:space-between; align-items:center; margin:.4rem 0 .6rem 0;}
 .sec .a {font-size:1.05rem; font-weight:800; color:var(--ink);}
-.sec .b {font-size:.8rem; color:var(--accent-dark); font-weight:600;}
 
 .pc {background:#fff; border-radius:18px; padding:.55rem; box-shadow:0 2px 12px rgba(0,0,0,.05); margin-bottom:.4rem;}
 .pimg {width:100%; aspect-ratio:1/1; border-radius:14px; background:#EEF0F4; overflow:hidden;
@@ -61,7 +60,7 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
   line-height:1.2em;}
 .pp {font-size:.95rem; font-weight:800; color:var(--accent-dark); margin:.15rem 0 .3rem 0;}
 
-/* buttons */
+/* Buttons */
 .stButton > button, .stDownloadButton > button, .stLinkButton > a, .stFormSubmitButton > button {
   border-radius:12px !important; font-weight:700 !important; border:1px solid #E5E7EB !important;
   background:#fff !important; color:var(--ink) !important; width:100%;}
@@ -69,10 +68,10 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
   background:var(--accent) !important; color:#fff !important; border:none !important;}
 .stButton > button[kind="primary"]:hover {background:var(--accent-dark) !important;}
 
-/* search */
+/* Search */
 .stTextInput input {border-radius:14px !important; background:#fff !important;}
 
-/* bottom nav */
+/* Bottom Nav */
 .st-key-bottomnav {position:fixed; left:0; right:0; bottom:0; z-index:999; background:#fff;
   padding:.45rem .6rem calc(.45rem + env(safe-area-inset-bottom)); box-shadow:0 -4px 20px rgba(0,0,0,.08);
   border-radius:20px 20px 0 0;}
@@ -81,7 +80,7 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
 .st-key-bottomnav .stButton > button {border:none !important; background:transparent !important;
   font-size:.72rem !important; padding:.25rem 0 !important; color:var(--muted) !important;
   flex-direction:column; height:auto;}
-.st-key-bottomnav .stButton > button[kind="primary"] {background:transparent !important; color:var(--accent-dark) !important;}
+.st-key-bottomnav .stButton > button[kind="primary"] {background:transparent !important; color:var(--accent) !important;}
 
 .cartrow {background:#fff; border-radius:16px; padding:.5rem; display:flex; gap:.7rem; align-items:center;
   box-shadow:0 2px 10px rgba(0,0,0,.05); margin-bottom:.3rem;}
@@ -127,7 +126,6 @@ def is_active(v) -> bool:
 
 
 def load_products(force: bool = False) -> pd.DataFrame:
-    """Cached in session so tab switches don't refetch; forced fresh at checkout."""
     if force or "products_df" not in st.session_state:
         df = read_sheet("products", PRODUCT_COLS)
         df = df[df["Product ID"].notna()].reset_index(drop=True)
@@ -154,7 +152,6 @@ def img_of(row, i=1) -> str:
 
 
 def process_upload(file) -> str:
-    """Resize + compress an uploaded image to a data URI that fits in one sheet cell."""
     img = Image.open(file).convert("RGB")
     for size, quality in [(520, 72), (440, 65), (360, 58), (300, 50), (240, 45)]:
         im = img.copy()
@@ -243,7 +240,7 @@ def admin_page():
             desc = st.text_area("Description")
             files = st.file_uploader("Images (up to 3)", type=["png", "jpg", "jpeg", "webp"],
                                      accept_multiple_files=True)
-            urls = st.text_input("...or image URL (optional, used if no upload)")
+            urls = st.text_input("...or image URL (optional)")
             if st.form_submit_button("Upload product", type="primary"):
                 if not title.strip():
                     st.error("Title is required")
@@ -295,21 +292,6 @@ def admin_page():
                 st.session_state.pop("products_df", None)
                 st.success("Products updated")
 
-            with st.expander("Replace product images"):
-                labels = {f"{r['Title']} ({r['Product ID']})": r["Product ID"] for _, r in pdf.iterrows()}
-                sel = st.selectbox("Product", list(labels.keys()))
-                newf = st.file_uploader("New images (up to 3)", type=["png", "jpg", "jpeg", "webp"],
-                                        accept_multiple_files=True, key="repl_imgs")
-                if st.button("Replace images") and newf:
-                    imgs = [process_upload(f) for f in newf[:3]]
-                    imgs += [""] * (3 - len(imgs))
-                    idx = pdf.index[pdf["Product ID"] == labels[sel]][0]
-                    pdf.loc[idx, ["Image 1", "Image 2", "Image 3"]] = imgs
-                    write_sheet("products", pdf[PRODUCT_COLS])
-                    st.session_state.admin_products = pdf[PRODUCT_COLS]
-                    st.session_state.pop("products_df", None)
-                    st.success("Images replaced")
-
     st.write("")
     if st.button("Logout"):
         st.session_state.is_admin = False
@@ -344,19 +326,19 @@ def home_page():
     st.markdown(f"""
     <div class='hdr'>
       <div><div class='hi'>Welcome to</div><div class='nm'>{html.escape(SHOP_NAME)}</div></div>
-      <div class='badge'>
-        <svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='#111827' stroke-width='1.8'
-         stroke-linecap='round' stroke-linejoin='round'><path d='M6 7h12l-1 12H7L6 7z'/><path d='M9 7a3 3 0 0 1 6 0'/></svg>
-      </div>
+      <div class='badge'>🛒</div>
     </div>""", unsafe_allow_html=True)
 
     q = st.text_input("Search", placeholder="Search products", label_visibility="collapsed", key="search_q")
 
     st.markdown("""
-    <div class='banner'><div class='t'>Shop the<br>new products</div>
-    <div class='s'>Fresh arrivals, delivered to your door</div></div>""", unsafe_allow_html=True)
+    <div class='banner'>
+      <div class='t'>Special Discount</div>
+      <div class='s'>50% OFF</div>
+      <div style='font-size:12px; opacity:0.9; margin-top:4px;'>On all seasonal collection items!</div>
+    </div>""", unsafe_allow_html=True)
 
-    st.markdown("<div class='sec'><span class='a'>New Arrivals</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='sec'><span class='a'>Popular Products</span></div>", unsafe_allow_html=True)
 
     if q.strip():
         ql = q.strip().lower()
@@ -368,7 +350,6 @@ def home_page():
         st.info("No products available right now.")
         return
 
-    # newest first
     products = products.iloc[::-1].reset_index(drop=True)
     for i in range(0, len(products), 2):
         cols = st.columns(2)
@@ -465,7 +446,6 @@ def cart_page():
         elif not (pin.isdigit() and len(pin) == 6):
             st.error("Enter a valid 6-digit PIN code.")
         else:
-            # fetch fresh product data for the final decision
             fresh = load_products(force=True)
             fresh = fresh.set_index(fresh["Product ID"].astype(str))
             lines, total = [], 0.0
