@@ -608,6 +608,11 @@ def norm_phone(v) -> str:
     return re.sub(r"\D", "", sval(v).replace(".0", ""))[-10:]
 
 
+def show_err(msg: str, e: Exception):
+    st.error(msg)
+    st.code(f"{type(e).__name__}: {str(e)[:400]}", language=None)
+
+
 def wa_url(text: str, number: str = None) -> str:
     return f"https://wa.me/{number or WHATSAPP_NUMBER}?text=" + urllib.parse.quote(text)
 
@@ -707,6 +712,24 @@ def admin_page():
         admin_login_form("adm")
         return
 
+    with st.expander("Sheet connection check"):
+        if st.button("Run check", key="conn_check"):
+            for ws, cols in (("orders", ORDER_COLS), ("products", PRODUCT_COLS)):
+                try:
+                    df = read_sheet(ws, cols, strict=True)
+                    st.success(f"'{ws}': can read ({len(df)} rows)")
+                except Exception as e:
+                    show_err(f"'{ws}': read or setup failed", e)
+            try:
+                odf_ = read_sheet("orders", ORDER_COLS, strict=True)
+                if len(odf_):
+                    write_sheet("orders", odf_[ORDER_COLS])
+                    st.success("Write test passed (the sheet is shared as Editor).")
+                else:
+                    st.info("Write test skipped: the orders sheet is empty.")
+            except Exception as e:
+                show_err("Write test failed. Share the sheet with the service account as Editor.", e)
+
     tab_orders, tab_products = st.tabs(["Orders", "Manage Products"])
 
     # ---------------- Orders ----------------
@@ -714,8 +737,11 @@ def admin_page():
         if st.button("Refresh", key="ref_orders"):
             st.session_state.pop("admin_orders", None)
         if "admin_orders" not in st.session_state:
-            st.session_state.admin_orders = read_sheet("orders", ORDER_COLS)
-        odf = st.session_state.admin_orders.copy()
+            try:
+                st.session_state.admin_orders = read_sheet("orders", ORDER_COLS, strict=True)
+            except Exception as e:
+                show_err("Could not read the orders sheet.", e)
+        odf = st.session_state.get("admin_orders", pd.DataFrame(columns=ORDER_COLS)).copy()
         if odf.empty:
             st.info("No orders yet.")
         else:
@@ -759,8 +785,8 @@ def admin_page():
                     write_sheet("orders", new)
                     st.session_state.admin_orders = new
                     st.success("Orders updated")
-                except Exception:
-                    st.error("Could not save. Check the sheet is shared with the service account.")
+                except Exception as e:
+                    show_err("Could not save. Check the sheet is shared with the service account.", e)
 
     # ---------------- Products ----------------
     with tab_products:
@@ -828,14 +854,17 @@ def admin_page():
                         st.session_state.up_n += 1
                         st.session_state.flash = "Product added"
                         st.rerun()
-                    except Exception:
-                        st.error("Could not save the product. Check the sheet connection.")
+                    except Exception as e:
+                        show_err("Could not save the product. Check the sheet connection.", e)
 
         st.divider()
         st.markdown("**Manage products**")
         if "admin_products" not in st.session_state:
-            st.session_state.admin_products = read_sheet("products", PRODUCT_COLS)
-        pdf = st.session_state.admin_products.copy()
+            try:
+                st.session_state.admin_products = read_sheet("products", PRODUCT_COLS, strict=True)
+            except Exception as e:
+                show_err("Could not read or set up the products sheet.", e)
+        pdf = st.session_state.get("admin_products", pd.DataFrame(columns=PRODUCT_COLS)).copy()
         if pdf.empty:
             st.info("No products yet.")
         else:
@@ -869,8 +898,8 @@ def admin_page():
                     st.session_state.admin_products = out[PRODUCT_COLS]
                     st.session_state.pop("products_df", None)
                     st.success("Products updated")
-                except Exception:
-                    st.error("Could not save. Check the sheet connection.")
+                except Exception as e:
+                    show_err("Could not save. Check the sheet connection.", e)
 
         if not pdf.empty:
             with st.expander("Current products and images"):
@@ -895,8 +924,8 @@ def admin_page():
                         st.session_state.admin_products = full[PRODUCT_COLS]
                         st.session_state.pop("products_df", None)
                         st.success("Images replaced")
-                    except Exception:
-                        st.error("Could not replace the images. Check the sheet connection.")
+                    except Exception as e:
+                        show_err("Could not replace the images. Check the sheet connection.", e)
 
     st.write("")
     if st.button("Logout"):
