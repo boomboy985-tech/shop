@@ -19,6 +19,7 @@ SHOP_NAME = "Cartel Shop"
 WHATSAPP_NUMBER = "918089523293"  # WhatsApp business number with country code
 SUPPORT_EMAIL = ""
 ADMIN_PAGE_KEY = "rootcartel"  # Open admin dashboard via ?page=rootcartel
+ADMIN_USERNAME = st.secrets.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "adithyan1234")
 CURRENCY = "Rs."
 
@@ -187,6 +188,26 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
 @keyframes drive {0%,32% {transform:translateX(0); opacity:1;} 92% {transform:translateX(210px); opacity:1;} 100% {transform:translateX(250px); opacity:0;}}
 @keyframes dropbox {0% {transform:translateY(-70px); opacity:0;} 8% {opacity:1;} 28%,100% {transform:translateY(0); opacity:1;}}
 @keyframes road {to {stroke-dashoffset:-18;}}
+
+/* Always-visible typed text (fixes white-on-white in dark mode) */
+:root, .stApp {color-scheme:light;}
+.stApp label, .stApp [data-testid="stWidgetLabel"] p, .stApp [data-testid="stCaptionContainer"] {color:#374151 !important;}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 {color:var(--ink) !important;}
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] p, [data-testid="stMain"] [data-testid="stMarkdownContainer"] li {color:var(--ink);}
+.stButton button p, .stLinkButton a p, .stFormSubmitButton button p {color:inherit !important;}
+.stButton button[kind="primary"] p, .stFormSubmitButton button[kind="primary"] p, .stLinkButton a[kind="primary"] p {color:#fff !important;}
+.stTextInput input, .stTextArea textarea, .stNumberInput input, .stDateInput input,
+[data-baseweb="select"] input, [data-baseweb="select"] [class*="singleValue"], [data-baseweb="select"] div {
+  color:#111827 !important; -webkit-text-fill-color:#111827 !important; caret-color:#111827;}
+.stTextInput input, .stTextArea textarea, .stNumberInput input {background:#fff !important;}
+.stTextInput > div > div, .stTextArea > div > div, .stNumberInput > div > div, [data-baseweb="select"] > div {
+  background:#fff !important; border-color:#E5E7EB !important;}
+input::placeholder, textarea::placeholder {color:#9CA3AF !important; -webkit-text-fill-color:#9CA3AF !important; opacity:1 !important;}
+[data-baseweb="popover"] ul, [data-baseweb="popover"] li, [data-baseweb="menu"] {background:#fff !important; color:#111827 !important;}
+[data-baseweb="popover"] li * {color:#111827 !important; -webkit-text-fill-color:#111827 !important;}
+[data-testid="stDialog"] > div, div[role="dialog"] {background:#fff !important; color:#111827;}
+[data-testid="stExpander"] details {background:#fff; border-radius:14px;}
+[data-testid="stExpander"] summary p {color:var(--ink) !important;}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -587,6 +608,74 @@ def norm_phone(v) -> str:
     return re.sub(r"\D", "", sval(v).replace(".0", ""))[-10:]
 
 
+def wa_url(text: str, number: str = None) -> str:
+    return f"https://wa.me/{number or WHATSAPP_NUMBER}?text=" + urllib.parse.quote(text)
+
+
+def parse_full_address(full: str, pin: str = "") -> dict:
+    """Orders store 'street, district, state' in one cell; split it back for pre-filling."""
+    parts = [p.strip() for p in sval(full).split(",")]
+    state = dist = ""
+    if parts and parts[-1] in STATES:
+        state = parts.pop()
+        if parts:
+            dist = parts.pop()
+    return {"State": state, "District": dist, "PIN Code": sval(pin).replace(".0", ""),
+            "Full Adress": ", ".join(p for p in parts if p)}
+
+
+def customer_from_phone(phone: str):
+    """Login by the phone number used when ordering (falls back to the optional customers sheet)."""
+    odf = read_sheet("orders", ORDER_COLS)
+    m = odf[odf["Phone Number"].apply(norm_phone) == phone]
+    if not m.empty:
+        last = m.iloc[-1]
+        a = parse_full_address(last["Full Adress"], last["PIN Code"])
+        return {"Customer ID": "", "Name": sval(last["Custumer Name"]), "Phone Number": phone, **a}
+    try:
+        cdf = read_sheet("customers", CUSTOMER_COLS, strict=True)
+        h = cdf[cdf["Phone Number"].apply(norm_phone) == phone]
+        if not h.empty:
+            return {k: sval(v) for k, v in h.iloc[0].to_dict().items()}
+    except Exception:
+        pass
+    return None
+
+
+def order_message(order_id, ts, name, phone, addr, lines, total) -> str:
+    out = [f"*New Order - {SHOP_NAME}*", f"Order ID: {order_id}", f"Date: {ts}", "",
+           "*Customer details*", f"Name: {name}", f"Phone: {phone}", "",
+           "*Delivery address*", f"House / street: {addr['Full Adress']}", f"District: {addr['District']}",
+           f"State: {addr['State']}", f"PIN code: {addr['PIN Code']}", "", "*Items*"]
+    for n, ln in enumerate(lines, 1):
+        label = sval(ln["row"]["Title"]) + (f" ({ln['color']})" if ln["color"] else "")
+        note = "  [bulk discount applied]" if ln["bulk"] else ""
+        out.append(f"{n}. {label} - {ln['qty']} x {fmt(ln['unit'])} = {fmt(ln['unit'] * ln['qty'])}{note}")
+    out += ["", f"*Total: {fmt(total)}*", "", "Please confirm my order and delivery."]
+    return "\n".join(out)
+
+
+def cart_enquiry_message(lines, total) -> str:
+    out = [f"Hello {SHOP_NAME}, I would like to enquire about these items:", ""]
+    for n, ln in enumerate(lines, 1):
+        label = sval(ln["row"]["Title"]) + (f" ({ln['color']})" if ln["color"] else "")
+        out.append(f"{n}. {label} - {ln['qty']} x {fmt(ln['unit'])}")
+    out += ["", f"Total: {fmt(total)}", "", "Is this available?"]
+    return "\n".join(out)
+
+
+def chat_message(cust=None, last_order: str = "") -> str:
+    out = [f"Hello {SHOP_NAME}, I need help."]
+    if cust:
+        out += ["", f"Name: {cust.get('Name', '')}", f"Phone: {norm_phone(cust.get('Phone Number'))}"]
+        if last_order:
+            out.append(f"Order ID: {last_order}")
+    else:
+        out += ["", "Name:", "Phone:", "Order ID (if any):"]
+    out += ["", "My question: "]
+    return "\n".join(out)
+
+
 # =====================================================================
 # ADMIN DASHBOARD
 # =====================================================================
@@ -598,18 +687,24 @@ def order_total(txt: str) -> float:
         return 0.0
 
 
+def admin_login_form(prefix: str):
+    with st.form(f"admin_login_{prefix}"):
+        user = st.text_input("Admin username", key=f"{prefix}_user")
+        pw = st.text_input("Admin password", type="password", key=f"{prefix}_pw")
+        if st.form_submit_button("Login as admin", type="primary"):
+            if user.strip() == ADMIN_USERNAME and pw == ADMIN_PASSWORD:
+                st.session_state.is_admin = True
+                st.session_state.admin_mode = True
+                st.rerun()
+            else:
+                st.error("Incorrect username or password")
+
+
 def admin_page():
     st.markdown(f"<div class='hdr'><div><div class='hi'>Admin</div><div class='nm'>{SHOP_NAME} Dashboard</div></div></div>",
                 unsafe_allow_html=True)
     if not st.session_state.get("is_admin"):
-        with st.form("admin_login"):
-            pw = st.text_input("Admin password", type="password")
-            if st.form_submit_button("Login", type="primary"):
-                if pw == ADMIN_PASSWORD:
-                    st.session_state.is_admin = True
-                    st.rerun()
-                else:
-                    st.error("Incorrect password")
+        admin_login_form("adm")
         return
 
     tab_orders, tab_products = st.tabs(["Orders", "Manage Products"])
@@ -638,6 +733,20 @@ def admin_page():
             if len(days):
                 st.caption("Orders per day")
                 st.bar_chart(days.value_counts().sort_index(), color="#FF5722", height=140)
+            st.markdown("**All orders**")
+            flt = st.selectbox("Show", ["All"] + STATUS_OPTIONS, key="ord_filter", label_visibility="collapsed")
+            shown = odf if flt == "All" else odf[odf["Status"] == flt]
+            for _, o in shown.iloc[::-1].iterrows():
+                oid, nm_, ph_ = sval(o["Order ID"]), sval(o["Custumer Name"]), norm_phone(o["Phone Number"])
+                with st.expander(f"{oid}  |  {nm_}  |  {o['Status']}"):
+                    st.markdown(
+                        f"**Customer:** {nm_}  \n**Phone:** {ph_}  \n**Placed:** {sval(o['TimeStamp'])}  \n"
+                        f"**PIN:** {sval(o['PIN Code']).replace('.0', '')}  \n**Address:** {sval(o['Full Adress'])}  \n"
+                        f"**Items & total:** {sval(o['Order Items & Total'])}  \n**Status:** {o['Status']}")
+                    if len(ph_) == 10:
+                        st.link_button("Message customer on WhatsApp", wa_url(
+                            f"Hello {nm_}, your order {oid} from {SHOP_NAME} is now: {o['Status']}.", "91" + ph_))
+            st.markdown("**Update order status**")
             view = odf.iloc[::-1].reset_index(drop=True)
             edited = st.data_editor(
                 view, hide_index=True, use_container_width=True, key="orders_editor",
@@ -675,6 +784,18 @@ def admin_page():
                 st.session_state.adm_colors = []
                 st.rerun()
 
+        if "up_n" not in st.session_state:
+            st.session_state.up_n = 0
+        if st.session_state.get("flash"):
+            st.success(st.session_state.pop("flash"))
+        files = st.file_uploader("Product images (up to 3)", type=["png", "jpg", "jpeg", "webp"],
+                                 accept_multiple_files=True, key=f"up_{st.session_state.up_n}")
+        if files:
+            pc = st.columns(3)
+            for i, f in enumerate(files[:3]):
+                pc[i].image(f, use_container_width=True)
+            if len(files) > 3:
+                st.caption("Only the first 3 images are used.")
         with st.form("add_product", clear_on_submit=True):
             title = st.text_input("Title")
             price = st.number_input("Price", min_value=0.0, step=1.0)
@@ -683,8 +804,7 @@ def admin_page():
             b1, b2 = st.columns(2)
             bulk_q = b1.number_input("Bulk discount: minimum pieces", min_value=0, step=1, value=0)
             bulk_d = b2.number_input("Bulk discount %", min_value=0.0, max_value=90.0, step=1.0, value=0.0)
-            files = st.file_uploader("Images (up to 3)", type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True)
-            urls = st.text_input("...or image URL (optional)")
+            urls = st.text_input("...or image URL (optional, used if no image is uploaded)")
             if st.form_submit_button("Upload product", type="primary"):
                 if not title.strip():
                     st.error("Title is required")
@@ -705,7 +825,9 @@ def admin_page():
                         st.session_state.adm_colors = []
                         st.session_state.pop("products_df", None)
                         st.session_state.pop("admin_products", None)
-                        st.success("Product added")
+                        st.session_state.up_n += 1
+                        st.session_state.flash = "Product added"
+                        st.rerun()
                     except Exception:
                         st.error("Could not save the product. Check the sheet connection.")
 
@@ -750,9 +872,36 @@ def admin_page():
                 except Exception:
                     st.error("Could not save. Check the sheet connection.")
 
+        if not pdf.empty:
+            with st.expander("Current products and images"):
+                for _, r in pdf.iterrows():
+                    ic, tc = st.columns([1, 3])
+                    ic.image(images_of(r)[0], use_container_width=True)
+                    tc.markdown(f"**{sval(r['Title'])}**  \n{fmt(to_price(r['Price']))}  \n"
+                                f"{'Active' if is_active(r['Active']) else 'Hidden'}")
+            with st.expander("Replace product images"):
+                labels = {f"{sval(r['Title'])} ({r['Product ID']})": r["Product ID"] for _, r in pdf.iterrows()}
+                sel = st.selectbox("Product", list(labels.keys()), key="repl_sel")
+                newf = st.file_uploader("New images (up to 3)", type=["png", "jpg", "jpeg", "webp"],
+                                        accept_multiple_files=True, key="repl_imgs")
+                if st.button("Replace images", key="repl_btn") and newf:
+                    try:
+                        full = read_sheet("products", PRODUCT_COLS, strict=True)
+                        imgs = [process_upload(f) for f in newf[:3]]
+                        imgs += [""] * (3 - len(imgs))
+                        idx = full.index[full["Product ID"].astype(str) == str(labels[sel])][0]
+                        full.loc[idx, ["Image 1", "Image 2", "Image 3"]] = imgs
+                        write_sheet("products", full[PRODUCT_COLS])
+                        st.session_state.admin_products = full[PRODUCT_COLS]
+                        st.session_state.pop("products_df", None)
+                        st.success("Images replaced")
+                    except Exception:
+                        st.error("Could not replace the images. Check the sheet connection.")
+
     st.write("")
     if st.button("Logout"):
         st.session_state.is_admin = False
+        st.session_state.admin_mode = False
         st.rerun()
 
 
@@ -865,7 +1014,10 @@ def cart_page():
         o = st.session_state.last_order
         st.markdown(TRUCK_SVG, unsafe_allow_html=True)
         st.success(f"Order {o['id']} placed successfully.")
+        st.info("Tap the button to send your order, details and delivery address to the shop on WhatsApp.")
         st.link_button("Send order details on WhatsApp", o["wa"], type="primary")
+        with st.expander("Preview message"):
+            st.text(o.get("msg", ""))
         if st.button("Done"):
             st.session_state.last_order = None
             st.rerun()
@@ -915,6 +1067,7 @@ def cart_page():
     </div>""", unsafe_allow_html=True)
 
     if not st.session_state.checkout:
+        st.link_button("Ask about these items on WhatsApp", wa_url(cart_enquiry_message(lines, subtotal)))
         if st.button("Proceed to checkout", type="primary"):
             st.session_state.checkout = True
             st.rerun()
@@ -964,10 +1117,10 @@ def cart_page():
                                      "Phone Number": phone, "PIN Code": addr["PIN Code"], "Full Adress": full_addr,
                                      "Order Items & Total": items_txt, "Status": "Pending"}])
                 write_sheet("orders", pd.concat([odf, new], ignore_index=True)[ORDER_COLS])
-                msg = (f"New order {order_id} - {SHOP_NAME}\nName: {name.strip()}\nPhone: {phone}\n"
-                       f"PIN: {addr['PIN Code']}\nAddress: {full_addr}\nItems: {items_txt}")
-                wa = f"https://wa.me/{WHATSAPP_NUMBER}?text=" + urllib.parse.quote(msg)
-                st.session_state.last_order = {"id": order_id, "wa": wa}
+                msg = order_message(order_id, ts, name.strip(), phone, addr, flines, total)
+                st.session_state.last_order = {"id": order_id, "wa": wa_url(msg), "msg": msg}
+                if not st.session_state.customer:
+                    st.session_state.customer = {"Customer ID": "", "Name": name.strip(), "Phone Number": phone, **addr}
                 st.session_state.cart = {}
                 st.session_state.checkout = False
                 st.rerun()
@@ -985,10 +1138,13 @@ def new_customer_id(existing: list) -> str:
 
 def profile_page():
     cust = st.session_state.customer
+    last_oid = ""
     if cust:
         st.markdown(f"<div class='hdr'><div><div class='hi'>Signed in</div><div class='nm'>{html.escape(cust['Name'])}</div></div></div>",
                     unsafe_allow_html=True)
-        st.markdown(f"<div class='sumbox'><div class='r'><span>Customer ID</span><span><b>{html.escape(cust['Customer ID'])}</b></span></div>"
+        cid_row = (f"<div class='r'><span>Customer ID</span><span><b>{html.escape(cust['Customer ID'])}</b></span></div>"
+                   if cust.get("Customer ID") else "")
+        st.markdown(f"<div class='sumbox'>{cid_row}"
                     f"<div class='r'><span>Phone</span><span>{html.escape(norm_phone(cust['Phone Number']))}</span></div></div>",
                     unsafe_allow_html=True)
         st.markdown("**Ordered items**")
@@ -996,6 +1152,8 @@ def profile_page():
         mine = odf[odf["Phone Number"].apply(norm_phone) == norm_phone(cust["Phone Number"])]
         if mine.empty:
             st.info("No orders yet.")
+        else:
+            last_oid = sval(mine.iloc[-1]["Order ID"])
         for n, (_, o) in enumerate(mine.iloc[::-1].iterrows()):
             label, cls = delivery_label(o["Status"])
             st.markdown(f"""
@@ -1013,59 +1171,25 @@ def profile_page():
     else:
         st.markdown("<div class='hdr'><div><div class='hi'>Profile</div><div class='nm'>Welcome</div></div></div>",
                     unsafe_allow_html=True)
-        t_login, t_new, t_find = st.tabs(["Login", "Create ID", "Find ID"])
+        t_login, t_admin = st.tabs(["Customer login", "Admin"])
         with t_login:
-            cid = st.text_input("Customer ID", key="lg_id").strip().upper()
+            st.caption("Log in with the phone number you used when ordering.")
             ph = st.text_input("Phone number", max_chars=10, key="lg_ph").strip()
             if st.button("Login", type="primary", key="lg_btn"):
-                try:
-                    cdf = read_sheet("customers", CUSTOMER_COLS, strict=True)
-                    hit = cdf[(cdf["Customer ID"].apply(sval).str.upper() == cid) &
-                              (cdf["Phone Number"].apply(norm_phone) == ph)]
-                    if hit.empty:
-                        st.error("Customer ID and phone number do not match.")
-                    else:
-                        st.session_state.customer = {k: sval(v) for k, v in hit.iloc[0].to_dict().items()}
-                        st.rerun()
-                except Exception:
-                    st.error("Customer login is not set up yet. Ask the shop owner to add a 'customers' sheet.")
-        with t_new:
-            nm = st.text_input("Full name", key="nc_name")
-            ph2 = st.text_input("Phone number", max_chars=10, key="nc_ph")
-            a = address_form("nc")
-            if st.button("Create Customer ID", type="primary", key="nc_btn"):
-                err = ("Please enter your name." if not nm.strip() else
-                       "Enter a valid 10-digit phone number." if not (ph2.isdigit() and len(ph2) == 10) else
-                       address_error(a))
-                if err:
-                    st.error(err)
+                if not (ph.isdigit() and len(ph) == 10):
+                    st.error("Enter a valid 10-digit phone number.")
                 else:
-                    try:
-                        cdf = read_sheet("customers", CUSTOMER_COLS, strict=True)
-                        cid = new_customer_id(cdf["Customer ID"].apply(sval).tolist())
-                        row = {"Customer ID": cid, "Name": nm.strip(), "Phone Number": ph2, **a,
-                               "Created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-                        write_sheet("customers", pd.concat([cdf, pd.DataFrame([row])], ignore_index=True)[CUSTOMER_COLS])
-                        st.session_state.customer = {k: sval(v) for k, v in row.items()}
+                    found = customer_from_phone(ph)
+                    if found:
+                        st.session_state.customer = found
                         st.rerun()
-                    except Exception:
-                        st.error("Could not create the ID. The shop owner needs to add a 'customers' sheet first.")
-        with t_find:
-            ph3 = st.text_input("Phone number used when creating the ID", max_chars=10, key="fd_ph").strip()
-            if st.button("Find my ID", key="fd_btn"):
-                try:
-                    cdf = read_sheet("customers", CUSTOMER_COLS, strict=True)
-                    hit = cdf[cdf["Phone Number"].apply(norm_phone) == ph3]
-                    if hit.empty:
-                        st.error("No Customer ID found for this number.")
                     else:
-                        for _, h in hit.iterrows():
-                            st.success(f"Customer ID: {sval(h['Customer ID'])}")
-                except Exception:
-                    st.error("Customer lookup is not set up yet.")
+                        st.error("No orders found for this number yet. Place an order first, then log in.")
+        with t_admin:
+            admin_login_form("prof")
 
     st.markdown("**Need help?**")
-    st.link_button("Chat on WhatsApp", f"https://wa.me/{WHATSAPP_NUMBER}", type="primary")
+    st.link_button("Chat on WhatsApp", wa_url(chat_message(cust, last_oid)), type="primary")
     with st.expander("Terms & Conditions"):
         for t in TERMS:
             st.markdown(f"- {t}")
@@ -1087,7 +1211,7 @@ def bottom_nav():
 
 
 # --- ROUTER ---
-if st.query_params.get("page") == ADMIN_PAGE_KEY:
+if st.query_params.get("page") == ADMIN_PAGE_KEY or st.session_state.get("admin_mode"):
     admin_page()
 else:
     tab = st.session_state.tab
