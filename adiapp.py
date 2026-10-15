@@ -1,6 +1,7 @@
 import base64
 import html
 import io
+import json
 import time
 import urllib.parse
 from datetime import datetime
@@ -97,8 +98,11 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATA LAYER ---
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- DATA LAYER (with automatic sample seeding if empty) ---
+with open("service_account.json") as f:
+    creds = json.load(f)
+
+conn = st.connection("gsheets", type=GSheetsConnection, **creds)
 
 PLACEHOLDER_IMG = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>"
                    "<rect width='300' height='300' fill='%23EEF0F4'/></svg>")
@@ -113,8 +117,21 @@ def _clean(df: pd.DataFrame, cols: list) -> pd.DataFrame:
 
 
 def read_sheet(name: str, cols: list) -> pd.DataFrame:
-    df = conn.read(worksheet=name, ttl=0)
-    return _clean(df, cols)
+    try:
+        df = conn.read(worksheet=name, ttl=0)
+        df = _clean(df, cols)
+        if df.empty and name == "products":
+            # Seed default products if sheet is empty
+            default_df = pd.DataFrame([
+                {"Products": 1, "Product ID": "P101", "Title": "Cartel Signature Tee", "Price": 499, "Description": "Premium cotton streetwear t-shirt.", "Image 1": "", "Image 2": "", "Image 3": "", "Active": "Yes"},
+                {"Products": 2, "Product ID": "P102", "Title": "Tactical Utility Pouch", "Price": 699, "Description": "Durable multi-purpose gear pouch.", "Image 1": "", "Image 2": "", "Image 3": "", "Active": "Yes"},
+                {"Products": 3, "Product ID": "P103", "Title": "Custom Engraved Dog Tag", "Price": 299, "Description": "Stainless steel personalized ID tag.", "Image 1": "", "Image 2": "", "Image 3": "", "Active": "Yes"}
+            ])
+            conn.update(worksheet="products", data=default_df)
+            return default_df
+        return df
+    except Exception:
+        return pd.DataFrame(columns=cols)
 
 
 def write_sheet(name: str, df: pd.DataFrame):
