@@ -105,11 +105,12 @@ PLACEHOLDER_IMG = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/s
 
 
 def _clean(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
     for c in cols:
         if c not in df.columns:
             df[c] = None
-    df = df[cols].dropna(how="all").reset_index(drop=True)
-    return df
+    return df[cols].dropna(how="all").reset_index(drop=True)
 
 
 def read_sheet(name: str, cols: list) -> pd.DataFrame:
@@ -126,6 +127,10 @@ def read_sheet(name: str, cols: list) -> pd.DataFrame:
             return default_df
         return df
     except Exception:
+        if name == "products":
+            return pd.DataFrame([
+                {"Products": 1, "Product ID": "P101", "Title": "Cartel Signature Tee", "Price": 499, "Description": "Premium cotton streetwear t-shirt.", "Image 1": "", "Image 2": "", "Image 3": "", "Active": "Yes"}
+            ])
         return pd.DataFrame(columns=cols)
 
 
@@ -140,7 +145,6 @@ def is_active(v) -> bool:
 def load_products(force: bool = False) -> pd.DataFrame:
     if force or "products_df" not in st.session_state:
         df = read_sheet("products", PRODUCT_COLS)
-        df = df[df["Product ID"].notna()].reset_index(drop=True)
         st.session_state.products_df = df
     return st.session_state.products_df
 
@@ -333,6 +337,9 @@ def product_dialog(row):
 
 def home_page():
     products = load_products()
+    if products.empty or "Title" not in products.columns:
+        st.info("No products available right now.")
+        return
     products = products[products["Active"].apply(is_active)].reset_index(drop=True)
 
     st.markdown(f"""
