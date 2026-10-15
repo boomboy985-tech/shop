@@ -97,8 +97,8 @@ h1,h2,h3,p,span,div,label {font-family:'Inter','Segoe UI',sans-serif;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATA LAYER (Using external credentials file) ---
-conn = st.connection("gsheets", type=GSheetsConnection, credentials="service_account.json")
+# --- DATA LAYER ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 PLACEHOLDER_IMG = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>"
                    "<rect width='300' height='300' fill='%23EEF0F4'/></svg>")
