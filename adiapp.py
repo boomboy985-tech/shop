@@ -16,7 +16,7 @@ from PIL import Image
 
 # --- CONFIGURATION & CONSTANTS ---
 WHATSAPP_NUMBER = "918089523293"  # Updated WhatsApp business number with country code
-CONTACT_EMAIL = "store@gmail.com"  # Change to your support email
+CONTACT_EMAIL = "boomboy985@gmail.com"  # Change to your support email
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
